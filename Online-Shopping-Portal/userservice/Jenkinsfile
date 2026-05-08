@@ -1,8 +1,9 @@
 /* =========================================================
-    Service one microservices
+    User Service Microservice CI Pipeline
  =========================================================*/
 
 pipeline {
+
     agent none
 
     options {
@@ -12,70 +13,136 @@ pipeline {
     }
 
     environment {
+
         GIT_REPO = "https://github.com/Lakshmanan1996/microservices-projects-store.git"
+
         DOCKERHUB_USER = "lakshvar96"
-        IMAGE= "userservice"
+
+        IMAGE = "userservice"
+
+        SONAR_PROJECT_KEY = "userservice"
+
+        SERVICE_NAME = "userservice"
+
+        JAVA_HOME = "/usr/lib/jvm/java-17-openjdk-amd64"
+
+        PATH = "${JAVA_HOME}/bin:${env.PATH}"
     }
 
     stages {
 
+        /* =========================================================
+            Checkout Source Code
+         =========================================================*/
         stage('Checkout Code') {
+
             agent { label 'workernode1' }
+
             steps {
+
+                echo "Checking out source code..."
+
                 checkout scm
             }
         }
 
+        /* =========================================================
+            Stash Source Code
+         =========================================================*/
         stage('Stash Source') {
+
             agent { label 'workernode1' }
+
             steps {
+
+                echo "Stashing source code..."
+
                 stash includes: '**/*', name: 'source-code'
             }
         }
 
+        /* =========================================================
+            Gradle Build
+         =========================================================*/
         stage('Gradle Build') {
+
             agent { label 'workernode2' }
+
             steps {
+
+                echo "Starting Gradle build..."
+
                 unstash 'source-code'
+
                 dir('Online-Shopping-Portal/userservice') {
+
                     sh 'chmod +x gradlew'
-                    sh './gradlew clean build -x test'
+
+                    sh './gradlew clean build'
                 }
             }
         }
 
+        /* =========================================================
+            SonarQube Analysis
+         =========================================================*/
         stage('SonarQube Analysis') {
+
             agent { label 'workernode2' }
+
             steps {
+
+                echo "Running SonarQube analysis..."
+
                 unstash 'source-code'
-                 withSonarQubeEnv('sonarqube') {
-                    sh """
+
+                dir('Online-Shopping-Portal/userservice') {
+
+                    withSonarQubeEnv('sonarqube') {
+
+                        sh '''
                         ./gradlew sonar \
-                        -Dsonar.projectKey=$userservice \
-                        -Dsonar.projectName="userservice \
-                        -Dsonar.host.url=\$SONAR_HOST_URL \
-                        -Dsonar.token=\$SONAR_AUTH_TOKEN
-                    """
+                        -Dsonar.projectKey=userservice \
+                        -Dsonar.projectName=userservice \
+                        -Dsonar.host.url=$SONAR_HOST_URL \
+                        -Dsonar.token=$SONAR_AUTH_TOKEN
+                        '''
+                    }
                 }
             }
         }
-            
-        
 
+        /* =========================================================
+            SonarQube Quality Gate
+         =========================================================*/
         stage('Quality Gate') {
+
             agent { label 'workernode2' }
+
             steps {
-                timeout(time: 2, unit: 'MINUTES') {
+
+                timeout(time: 5, unit: 'MINUTES') {
+
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
+        /* =========================================================
+            Docker Build
+         =========================================================*/
         stage('Docker Build') {
+
             agent { label 'workernode3' }
+
             steps {
+
+                echo "Building Docker image..."
+
                 unstash 'source-code'
-                dir('userservice') {
+
+                dir('Online-Shopping-Portal/userservice') {
+
                     sh """
                     docker build -t ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER} .
                     docker tag ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE}:latest
@@ -84,26 +151,50 @@ pipeline {
             }
         }
 
+        /* =========================================================
+            Trivy Image Scan
+         =========================================================*/
         stage('Trivy Scan') {
+
             agent { label 'workernode3' }
+
             steps {
+
+                echo "Running Trivy security scan..."
+
                 sh """
-                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER}
+                trivy image \
+                --exit-code 0 \
+                --severity HIGH,CRITICAL \
+                ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER}
                 """
             }
         }
 
+        /* =========================================================
+            Push Docker Image
+         =========================================================*/
         stage('Push Docker Image') {
+
             agent { label 'workernode3' }
+
             steps {
-                unstash 'source-code'
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
-                )]) {
-                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+
+                echo "Pushing Docker image to DockerHub..."
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+
+                    sh '''
+                    echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                    '''
                 }
+
                 sh """
                 docker push ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER}
                 docker push ${DOCKERHUB_USER}/${IMAGE}:latest
@@ -112,8 +203,24 @@ pipeline {
         }
     }
 
+    /* =========================================================
+        Post Build Actions
+     =========================================================*/
     post {
-        success { echo "✅ service-one Pipeline SUCCESS" }
-        failure { echo "❌ service-one CI Pipeline FAILED" }
+
+        success {
+
+            echo "✅ User Service CI Pipeline SUCCESS"
+        }
+
+        failure {
+
+            echo "❌ User Service CI Pipeline FAILED"
+        }
+
+        always {
+
+            cleanWs()
+        }
     }
 }
