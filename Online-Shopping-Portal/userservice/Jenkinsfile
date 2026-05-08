@@ -37,8 +37,8 @@ pipeline {
             agent { label 'workernode2' }
             steps {
                 unstash 'source-code'
-                dir('userservice') {
-                    
+                dir('Online-Shopping-Portal/userservice') {
+                    sh 'chmod +x gradlew'
                     sh './gradlew clean build -x test'
                 }
             }
