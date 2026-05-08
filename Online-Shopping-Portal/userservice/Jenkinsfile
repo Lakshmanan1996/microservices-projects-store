@@ -1,0 +1,119 @@
+/* =========================================================
+    Service one microservices
+ =========================================================*/
+
+pipeline {
+    agent none
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    environment {
+        GIT_REPO = "https://github.com/Lakshmanan1996/microservices-projects-store.git"
+        DOCKERHUB_USER = "lakshvar96"
+        IMAGE= "userservice"
+    }
+
+    stages {
+
+        stage('Checkout Code') {
+            agent { label 'workernode1' }
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Stash Source') {
+            agent { label 'workernode1' }
+            steps {
+                stash includes: '**/*', name: 'source-code'
+            }
+        }
+
+        stage('Gradle Build') {
+            agent { label 'workernode2' }
+            steps {
+                unstash 'source-code'
+                dir('service-one') {
+                    sh 'chmod +x gradlew'
+                    sh './gradlew clean build -x test'
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            agent { label 'workernode2' }
+            steps {
+                unstash 'source-code'
+                 withSonarQubeEnv('sonarqube') {
+                    sh """
+                        ./gradlew sonar \
+                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        -Dsonar.projectName="${SERVICE_NAME}" \
+                        -Dsonar.host.url=\$SONAR_HOST_URL \
+                        -Dsonar.token=\$SONAR_AUTH_TOKEN
+                    """
+                }
+            }
+        }
+            
+        
+
+        stage('Quality Gate') {
+            agent { label 'workernode2' }
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Docker Build') {
+            agent { label 'workernode3' }
+            steps {
+                unstash 'source-code'
+                dir('userservice') {
+                    sh """
+                    docker build -t ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER} .
+                    docker tag ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE}:latest
+                    """
+                }
+            }
+        }
+
+        stage('Trivy Scan') {
+            agent { label 'workernode3' }
+            steps {
+                sh """
+                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER}
+                """
+            }
+        }
+
+        stage('Push Docker Image') {
+            agent { label 'workernode3' }
+            steps {
+                unstash 'source-code'
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                }
+                sh """
+                docker push ${DOCKERHUB_USER}/${IMAGE}:${BUILD_NUMBER}
+                docker push ${DOCKERHUB_USER}/${IMAGE}:latest
+                """
+            }
+        }
+    }
+
+    post {
+        success { echo "✅ service-one Pipeline SUCCESS" }
+        failure { echo "❌ service-one CI Pipeline FAILED" }
+    }
+}
