@@ -1,0 +1,197 @@
+pipeline {
+    agent none
+
+     
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+
+    environment {
+        DOCKERHUB_USER = "lakshvar96"
+        IMAGE1 = "adminserver"
+        IMAGE2 ="product"
+        IMAGE3="userservice"
+        GIT_REPO = "https://github.com/Lakshmanan1996/microservices-projects-store.git"
+    }
+
+    /* =====================================================
+           CHECKOUT
+        ===================================================== */
+
+    stages {
+
+        stage('Checkout Code') {
+            agent { label 'workernode1' }
+            steps {
+                checkout([$class: 'GitSCM',
+                    branches: [[name: 'master']],
+                    userRemoteConfigs: [[url: "${GIT_REPO}"]]
+                ])
+            }
+        }
+
+        stage('Stash Source') {
+            agent { label 'workernode1' }
+            steps {
+                stash includes: '**/*', name: 'source-code'
+            }
+        }
+
+
+        /* ===================== Build Gradle Stage ===================== */
+            stage('Gradle Build') {
+            agent { label 'workernode2' }
+            steps {
+                sh """
+                chmod +x gradlew
+                ./gradlew clean build -x test
+                """
+            }
+        }
+
+
+          /* =====================================================
+           SONARQUBE ANALYSIS
+        ===================================================== */
+
+        stage('SonarQube Analysis') {
+            agent { label 'workernode2' }
+            steps {
+                unstash 'source-code'
+                script {
+                    def scannerHome = tool 'SonarQubeScanner'
+                    withSonarQubeEnv('sonarqube') {
+                        sh """
+                        ${scannerHome}/bin/sonar-scanner \
+                        -Dsonar.projectKey=kafka \
+                        -Dsonar.projectName=kafka \
+                        -Dsonar.sources=. \
+                        -Dsonar.exclusions=**/node_modules/**
+                        """
+                    }
+                }
+            }
+        }
+
+         /* =====================================================
+           QUALITY GATE
+        ===================================================== */
+
+        stage('Quality Gate') {
+            agent { label 'workernode2' }
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        /* =====================================================
+           OWASP DEPENDENCY CHECK
+        ===================================================== */
+
+        stage('OWASP Dependency Check') {
+
+            steps {
+
+                dependencyCheck additionalArguments: '''
+                    --scan .
+                    --format HTML
+                ''',
+                odcInstallation: 'OWASP-DC'
+
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+
+        /* =====================================================
+           DOCKER BUILD
+        ===================================================== */
+
+        stage('Docker Build') {
+            agent { label 'workernode3' }
+            steps {
+                unstash 'source-code'
+                echo "Build a image for adminserver"
+                sh """
+                docker build -t ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} .
+                docker tag ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE1}:latest
+                """
+
+                echo "Build a image for product"
+                sh """
+                docker build -t ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} .
+                docker tag ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE2}:latest
+                """
+
+                echo "Build a image for userservice"
+                sh """
+                docker build -t ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} .
+                docker tag ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE3}:latest
+                """
+
+
+
+            }
+        }
+
+           /* =====================================================
+           TRIVY IMAGE SCAN
+        ===================================================== */
+
+        stage('Trivy Scan') {
+            agent { label 'workernode3' }
+            steps {
+                sh """
+                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
+                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
+                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
+                """
+            }
+        }
+
+         /* =====================================================
+           DOCKER PUSH
+        ===================================================== */
+
+        stage('Push Image') {
+            agent { label 'workernode3' }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: 'dockerhub-creds',
+                    usernameVariable: 'DOCKER_USER',
+                    passwordVariable: 'DOCKER_PASS'
+                )]) {
+                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+                }
+
+                sh """
+                docker push ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
+                docker push ${DOCKERHUB_USER}/${IMAGE1}:latest
+                """
+
+                 sh """
+                docker push ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
+                docker push ${DOCKERHUB_USER}/${IMAGE2}:latest
+                """
+
+                 sh """
+                docker push ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
+                docker push ${DOCKERHUB_USER}/${IMAGE3}:latest
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "✅ kafka CI Pipeline SUCCESS"
+        }
+        failure {
+            echo "❌ kafka CI Pipeline FAILED"
+        }
+    }
+}
