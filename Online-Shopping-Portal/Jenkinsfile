@@ -80,10 +80,10 @@ pipeline {
                     def scannerHome = tool 'SonarQubeScanner'
                     withSonarQubeEnv('sonarqube') {
                         sh """
-                        ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=kafka \
-                        -Dsonar.projectName=kafka \
-                        
+                        chmod +x gradlew
+                        ./gradlew sonarqube \
+                            -Dsonar.projectKey=kafka \
+                            -Dsonar.projectName=kafka \
                         """
                     }
                 }
