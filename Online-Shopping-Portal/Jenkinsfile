@@ -44,9 +44,9 @@ pipeline {
         /* ===================== Build Gradle Stage ===================== */
             stage('Debug') {
             steps {
-            sh """
-            pwd
-            ls -R
+                sh """
+                pwd
+                ls -R
             """
         }
     }
