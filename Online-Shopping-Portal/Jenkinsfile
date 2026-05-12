@@ -37,22 +37,7 @@ pipeline {
             }
         }
 
-        /* ================= OWASP (SCA) ================= */
-        stage('OWASP Dependency Check') {
-            agent { label 'workernode2' }
-
-            steps {
-                dependencyCheck additionalArguments: '''
-                    --scan .
-                    --format HTML
-                    --format XML
-                    --out reports
-                ''',
-                odcInstallation: 'OWASP-DC'
-
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
-            }
-        }
+        
 
         /* ================= BUILD (GRADLE) ================= */
         stage('Build Services') {
@@ -96,6 +81,23 @@ pipeline {
                 timeout(time: 2, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
+            }
+        }
+
+        /* ================= OWASP (SCA) ================= */
+        stage('OWASP Dependency Check') {
+            agent { label 'workernode2' }
+
+            steps {
+                dependencyCheck additionalArguments: '''
+                    --scan .
+                    --format HTML
+                    --format XML
+                    --out reports
+                ''',
+                odcInstallation: 'OWASP-DC'
+
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
             }
         }
 
