@@ -33,12 +33,7 @@ pipeline {
             }
         }
 
-        stage('Stash Source') {
-            agent { label 'workernode1' }
-            steps {
-                stash includes: '**/*', name: 'source-code'
-            }
-        }
+       
 
 
         /* ===================== Build Gradle Stage ===================== */
@@ -62,6 +57,13 @@ pipeline {
                 cd ../../Online-Shopping-Portal/product && ./gradlew clean build -x test || true
                 cd ../../Online-Shopping-Portal/userservice && ./gradlew clean build -x test || true
                 """
+            }
+        }
+
+         stage('Stash Source') {
+            agent { label 'workernode1' }
+            steps {
+                stash includes: '**/*', name: 'source-code'
             }
         }
 
