@@ -47,21 +47,21 @@ pipeline {
                 sh """
                 pwd
                 ls -R
-            """
+                """
+            }
         }
-    }
 
         stage('Build Services') {
             steps {
-            sh """
-            ls
+                sh """
+                ls
 
-            cd Online-Shopping-Portal/adminserver && ./gradlew clean build -x test || true
-            cd ../../Online-Shopping-Portal/product && ./gradlew clean build -x test || true
-            cd ../../Online-Shopping-Portal/userservice && ./gradlew clean build -x test || true
-            """
+                cd Online-Shopping-Portal/adminserver && ./gradlew clean build -x test || true
+                cd ../../Online-Shopping-Portal/product && ./gradlew clean build -x test || true
+                cd ../../Online-Shopping-Portal/userservice && ./gradlew clean build -x test || true
+                """
+            }
         }
-    }
 
 
           /* =====================================================
