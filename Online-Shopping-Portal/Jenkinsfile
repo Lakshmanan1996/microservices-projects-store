@@ -1,7 +1,13 @@
 pipeline {
     agent none
 
-     
+    environment {
+        DOCKERHUB_USER = "lakshvar96"
+        IMAGE1 = "adminserver"
+        IMAGE2 = "product"
+        IMAGE3 = "userservice"
+        GIT_REPO = "https://github.com/Lakshmanan1996/microservices-projects-store.git"
+    }
 
     options {
         timestamps()
@@ -9,111 +15,38 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
-    environment {
-        DOCKERHUB_USER = "lakshvar96"
-        IMAGE1 = "adminserver"
-        IMAGE2 ="product"
-        IMAGE3="userservice"
-        GIT_REPO = "https://github.com/Lakshmanan1996/microservices-projects-store.git"
-    }
-
-    /* =====================================================
-           CHECKOUT
-        ===================================================== */
-
     stages {
 
-        stage('Checkout Code') {
+        /* ================= CHECKOUT ================= */
+        stage('Checkout') {
             agent { label 'workernode1' }
             steps {
-                checkout([$class: 'GitSCM',
-                    branches: [[name: 'master']],
-                    userRemoteConfigs: [[url: "${GIT_REPO}"]]
-                ])
+                git branch: 'master', url: "${GIT_REPO}"
             }
         }
 
-       
-
-
-        /* ===================== Build Gradle Stage ===================== */
-        stage('Debug') {
-             agent { label 'workernode1' }
+        /* ================= DEBUG ================= */
+        stage('Workspace Debug') {
+            agent { label 'workernode1' }
             steps {
                 sh """
+                echo "Workspace structure:"
                 pwd
                 ls -R
                 """
             }
         }
 
-        stage('Build Services') {
-             agent { label 'workernode1' }
-            steps {
-                sh """
-                ls
-
-                cd Online-Shopping-Portal/adminserver && ./gradlew clean build -x test || true
-                cd ../../Online-Shopping-Portal/product && ./gradlew clean build -x test || true
-                cd ../../Online-Shopping-Portal/userservice && ./gradlew clean build -x test || true
-                """
-            }
-        }
-
-         stage('Stash Source') {
-            agent { label 'workernode1' }
-            steps {
-                stash includes: '**/*', name: 'source-code'
-            }
-        }
-
-
-          /* =====================================================
-           SONARQUBE ANALYSIS
-        ===================================================== */
-
-        stage('SonarQube Analysis') {
-            agent { label 'workernode2' }
-            steps {
-                unstash 'source-code'
-                script {
-                    def scannerHome = tool 'SonarQubeScanner'
-                    withSonarQubeEnv('sonarqube') {
-                        sh """
-                        chmod +x gradlew
-                        ./gradlew sonarqube \
-                            -Dsonar.projectKey=kafka \
-                            -Dsonar.projectName=kafka \
-                        """
-                    }
-                }
-            }
-        }
-
-         /* =====================================================
-           QUALITY GATE
-        ===================================================== */
-
-        stage('Quality Gate') {
-            agent { label 'workernode2' }
-            steps {
-                timeout(time: 2, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-        }
-
-        /* =====================================================
-           OWASP DEPENDENCY CHECK
-        ===================================================== */
-
+        /* ================= OWASP (SCA) ================= */
         stage('OWASP Dependency Check') {
+            agent { label 'workernode2' }
 
             steps {
-
                 dependencyCheck additionalArguments: '''
                     --scan .
                     --format HTML
+                    --format XML
+                    --out reports
                 ''',
                 odcInstallation: 'OWASP-DC'
 
@@ -121,91 +54,124 @@ pipeline {
             }
         }
 
-        /* =====================================================
-           DOCKER BUILD
-        ===================================================== */
+        /* ================= BUILD (GRADLE) ================= */
+        stage('Build Services') {
+            agent { label 'workernode1' }
 
+            steps {
+                sh """
+                echo "Building adminserver"
+                cd Online-Shopping-Portal/adminserver && ./gradlew clean build -x test || true
+
+                echo "Building product"
+                cd ../product && ./gradlew clean build -x test || true
+
+                echo "Building userservice"
+                cd ../userservice && ./gradlew clean build -x test || true
+                """
+            }
+        }
+
+        /* ================= SONAR ================= */
+        stage('SonarQube Analysis') {
+            agent { label 'workernode2' }
+
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    sh """
+                    sonar-scanner \
+                        -Dsonar.projectKey=kafka \
+                        -Dsonar.projectName=kafka \
+                        -Dsonar.sources=.
+                    """
+                }
+            }
+        }
+
+        /* ================= QUALITY GATE ================= */
+        stage('Quality Gate') {
+            agent { label 'workernode2' }
+
+            steps {
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        /* ================= DOCKER BUILD ================= */
         stage('Docker Build') {
             agent { label 'workernode3' }
+
             steps {
-                unstash 'source-code'
-                echo "Build a image for adminserver"
                 sh """
-                docker build -t ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} .
+                echo "Building Docker images"
+
+                docker build -t ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} Online-Shopping-Portal/adminserver
+                docker build -t ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} Online-Shopping-Portal/product
+                docker build -t ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} Online-Shopping-Portal/userservice
+
                 docker tag ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE1}:latest
-                """
-
-                echo "Build a image for product"
-                sh """
-                docker build -t ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} .
                 docker tag ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE2}:latest
-                """
-
-                echo "Build a image for userservice"
-                sh """
-                docker build -t ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} .
                 docker tag ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE3}:latest
                 """
-
-
-
             }
         }
 
-           /* =====================================================
-           TRIVY IMAGE SCAN
-        ===================================================== */
-
+        /* ================= TRIVY ================= */
         stage('Trivy Scan') {
             agent { label 'workernode3' }
+
             steps {
                 sh """
-                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
-                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
-                trivy image --exit-code 0 --severity HIGH,CRITICAL ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
+                echo "Scanning adminserver image"
+                trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
+
+                echo "Scanning product image"
+                trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
+
+                echo "Scanning userservice image"
+                trivy image --severity HIGH,CRITICAL --exit-code 0 \
+                ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
                 """
             }
         }
 
-         /* =====================================================
-           DOCKER PUSH
-        ===================================================== */
-
-        stage('Push Image') {
+        /* ================= DOCKER PUSH ================= */
+        stage('Push Images') {
             agent { label 'workernode3' }
+
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'DOCKER_USER',
-                    passwordVariable: 'DOCKER_PASS'
+                    usernameVariable: 'USER',
+                    passwordVariable: 'PASS'
                 )]) {
-                    sh 'echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin'
+
+                    sh """
+                    echo $PASS | docker login -u $USER --password-stdin
+
+                    docker push ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
+                    docker push ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
+                    docker push ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
+
+                    docker push ${DOCKERHUB_USER}/${IMAGE1}:latest
+                    docker push ${DOCKERHUB_USER}/${IMAGE2}:latest
+                    docker push ${DOCKERHUB_USER}/${IMAGE3}:latest
+                    """
                 }
-
-                sh """
-                docker push ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
-                docker push ${DOCKERHUB_USER}/${IMAGE1}:latest
-                """
-
-                 sh """
-                docker push ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
-                docker push ${DOCKERHUB_USER}/${IMAGE2}:latest
-                """
-
-                 sh """
-                docker push ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
-                docker push ${DOCKERHUB_USER}/${IMAGE3}:latest
-                """
             }
         }
     }
 
     post {
         success {
-            echo "✅ kafka CI Pipeline SUCCESS"
+            echo "✅ DevSecOps Pipeline SUCCESS"
         }
         failure {
-            echo "❌ kafka CI Pipeline FAILED"
+            echo "❌ Pipeline FAILED"
         }
     }
 }
