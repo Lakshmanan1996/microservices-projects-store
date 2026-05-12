@@ -1,11 +1,14 @@
 pipeline {
+
     agent none
 
     environment {
         DOCKERHUB_USER = "lakshvar96"
+
         IMAGE1 = "adminserver"
         IMAGE2 = "product"
         IMAGE3 = "userservice"
+
         GIT_REPO = "https://github.com/Lakshmanan1996/microservices-projects-store.git"
     }
 
@@ -17,149 +20,265 @@ pipeline {
 
     stages {
 
-        /* ================= CHECKOUT ================= */
+        /* =========================================================
+           CHECKOUT
+        ========================================================= */
         stage('Checkout') {
-            agent { label 'workernode1' }
-            steps {
-                git branch: 'master', url: "${GIT_REPO}"
-            }
-        }
 
-        /* ================= DEBUG ================= */
-        stage('Workspace Debug') {
             agent { label 'workernode1' }
+
             steps {
+
+                git branch: 'master',
+                url: "${GIT_REPO}"
+
                 sh """
-                echo "Workspace structure:"
+                echo "Repository cloned successfully"
                 pwd
                 ls -R
                 """
             }
         }
 
-        
-
-        /* ================= BUILD (GRADLE) ================= */
+        /* =========================================================
+           BUILD SERVICES
+        ========================================================= */
         stage('Build Services') {
+
             agent { label 'workernode1' }
 
             steps {
+
                 sh """
-                echo "Building adminserver"
-                cd Online-Shopping-Portal/adminserver && ./gradlew clean build -x test || true
+                echo "========== BUILDING ADMINSERVER =========="
 
-                echo "Building product"
-                cd ../product && ./gradlew clean build -x test || true
+                cd Online-Shopping-Portal/adminserver
 
-                echo "Building userservice"
-                cd ../userservice && ./gradlew clean build -x test || true
+                chmod +x gradlew
+
+                ./gradlew clean build -x test
+
+                echo "========== BUILDING PRODUCT =========="
+
+                cd ../product
+
+                chmod +x gradlew
+
+                ./gradlew clean build -x test
+
+                echo "========== BUILDING USERSERVICE =========="
+
+                cd ../userservice
+
+                chmod +x gradlew
+
+                ./gradlew clean build -x test
                 """
             }
         }
 
-        /* ================= SONAR ================= */
+        /* =========================================================
+           SONARQUBE ANALYSIS
+        ========================================================= */
         stage('SonarQube Analysis') {
+
             agent { label 'workernode2' }
-            
+
             steps {
+
+                /*
+                 Because workernode2 has different workspace,
+                 checkout code again
+                */
+
+                git branch: 'master',
+                url: "${GIT_REPO}"
+
                 withSonarQubeEnv('sonarqube') {
+
                     sh """
-                    ./gradlew clean build
-                      -Dsonar.projectKey=kafka \
-                      -Dsonar.projectName=kafka
+                    echo "========== SONAR SCAN : ADMINSERVER =========="
+
+                    cd Online-Shopping-Portal/adminserver
+
+                    chmod +x gradlew
+
+                    ./gradlew sonarqube \
+                    -Dsonar.projectKey=adminserver \
+                    -Dsonar.projectName=adminserver
+
+                    echo "========== SONAR SCAN : PRODUCT =========="
+
+                    cd ../product
+
+                    chmod +x gradlew
+
+                    ./gradlew sonarqube \
+                    -Dsonar.projectKey=product \
+                    -Dsonar.projectName=product
+
+                    echo "========== SONAR SCAN : USERSERVICE =========="
+
+                    cd ../userservice
+
+                    chmod +x gradlew
+
+                    ./gradlew sonarqube \
+                    -Dsonar.projectKey=userservice \
+                    -Dsonar.projectName=userservice
                     """
                 }
             }
         }
 
-        /* ================= QUALITY GATE ================= */
+        /* =========================================================
+           QUALITY GATE
+        ========================================================= */
         stage('Quality Gate') {
+
             agent { label 'workernode2' }
 
             steps {
-                timeout(time: 2, unit: 'MINUTES') {
+
+                timeout(time: 5, unit: 'MINUTES') {
+
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-        /* ================= OWASP (SCA) ================= */
+        /* =========================================================
+           OWASP DEPENDENCY CHECK
+        ========================================================= */
         stage('OWASP Dependency Check') {
+
             agent { label 'workernode2' }
 
             steps {
-                dependencyCheck additionalArguments: '''
-                    --scan .
-                    --format HTML
-                    --format XML
-                    --out reports
-                ''',
-                odcInstallation: 'OWASP-DC'
 
-                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                dependencyCheck(
+                    additionalArguments: '''
+                        --scan .
+                        --format HTML
+                        --format XML
+                        --out reports
+                    ''',
+                    odcInstallation: 'OWASP-DC'
+                )
+
+                dependencyCheckPublisher(
+                    pattern: '**/dependency-check-report.xml'
+                )
             }
         }
 
-        /* ================= DOCKER BUILD ================= */
+        /* =========================================================
+           DOCKER BUILD
+        ========================================================= */
         stage('Docker Build') {
+
             agent { label 'workernode3' }
 
             steps {
+
+                /*
+                 Different node again,
+                 checkout repository again
+                */
+
+                git branch: 'master',
+                url: "${GIT_REPO}"
+
                 sh """
-                echo "Building Docker images"
+                echo "========== BUILDING DOCKER IMAGES =========="
 
-                docker build -t ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} Online-Shopping-Portal/adminserver
-                docker build -t ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} Online-Shopping-Portal/product
-                docker build -t ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} Online-Shopping-Portal/userservice
+                docker build -t ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} \
+                Online-Shopping-Portal/adminserver
 
-                docker tag ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE1}:latest
-                docker tag ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE2}:latest
-                docker tag ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} ${DOCKERHUB_USER}/${IMAGE3}:latest
+                docker build -t ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} \
+                Online-Shopping-Portal/product
+
+                docker build -t ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} \
+                Online-Shopping-Portal/userservice
+
+                echo "========== TAGGING IMAGES =========="
+
+                docker tag ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER} \
+                ${DOCKERHUB_USER}/${IMAGE1}:latest
+
+                docker tag ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER} \
+                ${DOCKERHUB_USER}/${IMAGE2}:latest
+
+                docker tag ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER} \
+                ${DOCKERHUB_USER}/${IMAGE3}:latest
                 """
             }
         }
 
-        /* ================= TRIVY ================= */
+        /* =========================================================
+           TRIVY SCAN
+        ========================================================= */
         stage('Trivy Scan') {
+
             agent { label 'workernode3' }
 
             steps {
+
                 sh """
-                echo "Scanning adminserver image"
+                echo "========== TRIVY SCAN : ADMINSERVER =========="
+
                 trivy image --severity HIGH,CRITICAL --exit-code 0 \
                 ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
 
-                echo "Scanning product image"
+                echo "========== TRIVY SCAN : PRODUCT =========="
+
                 trivy image --severity HIGH,CRITICAL --exit-code 0 \
                 ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
 
-                echo "Scanning userservice image"
+                echo "========== TRIVY SCAN : USERSERVICE =========="
+
                 trivy image --severity HIGH,CRITICAL --exit-code 0 \
                 ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
                 """
             }
         }
 
-        /* ================= DOCKER PUSH ================= */
+        /* =========================================================
+           PUSH IMAGES TO DOCKERHUB
+        ========================================================= */
         stage('Push Images') {
+
             agent { label 'workernode3' }
 
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: 'dockerhub-creds',
-                    usernameVariable: 'USER',
-                    passwordVariable: 'PASS'
-                )]) {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'USER',
+                        passwordVariable: 'PASS'
+                    )
+                ]) {
 
                     sh """
-                    echo $PASS | docker login -u $USER --password-stdin
+                    echo "========== DOCKER LOGIN =========="
+
+                    echo \$PASS | docker login -u \$USER --password-stdin
+
+                    echo "========== PUSHING VERSION TAGS =========="
 
                     docker push ${DOCKERHUB_USER}/${IMAGE1}:${BUILD_NUMBER}
+
                     docker push ${DOCKERHUB_USER}/${IMAGE2}:${BUILD_NUMBER}
+
                     docker push ${DOCKERHUB_USER}/${IMAGE3}:${BUILD_NUMBER}
 
+                    echo "========== PUSHING LATEST TAGS =========="
+
                     docker push ${DOCKERHUB_USER}/${IMAGE1}:latest
+
                     docker push ${DOCKERHUB_USER}/${IMAGE2}:latest
+
                     docker push ${DOCKERHUB_USER}/${IMAGE3}:latest
                     """
                 }
@@ -167,12 +286,24 @@ pipeline {
         }
     }
 
+    /* =========================================================
+       POST ACTIONS
+    ========================================================= */
     post {
+
         success {
+
             echo "✅ DevSecOps Pipeline SUCCESS"
         }
+
         failure {
-            echo "❌ Pipeline FAILED"
+
+            echo "❌ DevSecOps Pipeline FAILED"
+        }
+
+        always {
+
+            cleanWs()
         }
     }
 }
