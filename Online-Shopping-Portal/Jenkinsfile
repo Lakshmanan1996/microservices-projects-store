@@ -43,6 +43,7 @@ pipeline {
 
         /* ===================== Build Gradle Stage ===================== */
         stage('Debug') {
+             agent { label 'workernode1' }
             steps {
                 sh """
                 pwd
@@ -52,6 +53,7 @@ pipeline {
         }
 
         stage('Build Services') {
+             agent { label 'workernode1' }
             steps {
                 sh """
                 ls
