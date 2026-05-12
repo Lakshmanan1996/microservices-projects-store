@@ -64,8 +64,7 @@ pipeline {
             steps {
                 withSonarQubeEnv('sonarqube') {
                     sh """
-                    chmod +x gradlew
-                    ./gradlew sonarqube \
+                    ./gradlew clean build
                       -Dsonar.projectKey=kafka \
                       -Dsonar.projectName=kafka
                     """
