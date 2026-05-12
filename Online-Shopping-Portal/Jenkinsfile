@@ -83,8 +83,7 @@ pipeline {
                         ${scannerHome}/bin/sonar-scanner \
                         -Dsonar.projectKey=kafka \
                         -Dsonar.projectName=kafka \
-                        -Dsonar.sources=. \
-                        -Dsonar.exclusions=**/node_modules/**
+                        
                         """
                     }
                 }
