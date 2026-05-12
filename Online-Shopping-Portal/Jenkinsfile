@@ -42,7 +42,7 @@ pipeline {
 
 
         /* ===================== Build Gradle Stage ===================== */
-            stage('Debug') {
+        stage('Debug') {
             steps {
                 sh """
                 pwd
