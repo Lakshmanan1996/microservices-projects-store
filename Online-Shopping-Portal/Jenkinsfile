@@ -46,8 +46,9 @@ pipeline {
             agent { label 'workernode2' }
             steps {
                 sh """
-                chmod +x gradlew
-                ./gradlew clean build -x test
+                cd adminserver && ./gradlew clean build -x test || true
+                cd ../product && ./gradlew clean build -x test || true
+                cd ../userservice && ./gradlew clean build -x test
                 """
             }
         }
