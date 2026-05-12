@@ -60,14 +60,14 @@ pipeline {
         /* ================= SONAR ================= */
         stage('SonarQube Analysis') {
             agent { label 'workernode2' }
-
+            
             steps {
                 withSonarQubeEnv('sonarqube') {
                     sh """
-                    sonar-scanner \
-                        -Dsonar.projectKey=kafka \
-                        -Dsonar.projectName=kafka \
-                        -Dsonar.sources=.
+                    chmod +x gradlew
+                    ./gradlew sonarqube \
+                      -Dsonar.projectKey=kafka \
+                      -Dsonar.projectName=kafka
                     """
                 }
             }
